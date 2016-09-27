@@ -2,6 +2,8 @@ Base.eltype{V}(::GradientResult{V}) = V
 Base.eltype{V,G}(::Type{GradientResult{V,G}}) = V
 Base.eltype{V}(::JacobianResult{V}) = eltype(V)
 Base.eltype{V,J}(::Type{JacobianResult{V,J}}) = eltype(V)
+Base.eltype{V}(::HessianResult{V}) = V
+Base.eltype{V,G,H}(::Type{HessianResult{V,G,H}}) = V
 
 #############################################
 # Gradient of `f(::AbstractArray...)::Real` #
@@ -10,22 +12,22 @@ Base.eltype{V,J}(::Type{JacobianResult{V,J}}) = eltype(V)
 # utilities #
 #-----------#
 
-load_grad_result!(out, result, xtr) = adjoint!(out, xtr)
+load_grad_result!(out, result, xt) = adjoint!(out, xt)
 
-function load_grad_result!(out::GradientResult, result, xtr)
+function load_grad_result!(out::GradientResult, result, xt)
     out.value = value(result)
-    adjoint!(out.gradient, xtr)
+    adjoint!(out.gradient, xt)
     return out
 end
 
 # gradient #
 #----------#
 
-function gradient(f, x, tp::Tape = Tape(), xtr = track(x, tp))
-    result = f(xtr)
+function gradient(f, x, tp::Tape = Tape(), xt = track(x, tp))
+    result = f(xt)
     seed!(result)
     backprop!(tp)
-    return adjoint(xtr)
+    return adjoint(xt)
 end
 
 function gradient(f, xs::Tuple, tp::Tape = Tape(),
@@ -39,11 +41,11 @@ end
 # gradient! #
 #-----------#
 
-function gradient!(out, f, x, tp::Tape = Tape(), xtr = track(eltype(out), x, tp))
-    result = f(xtr)
+function gradient!(out, f, x, tp::Tape = Tape(), xt = track(eltype(out), x, tp))
+    result = f(xt)
     seed!(result)
     backprop!(tp)
-    return load_grad_result!(out, result, xtr)
+    return load_grad_result!(out, result, xt)
 end
 
 function gradient!(outs::Tuple, f, xs::Tuple, tp::Tape = Tape(),
@@ -64,44 +66,43 @@ end
 # utilities #
 #-----------#
 
-function load_jacobian!(out, xtr, y, tp::Tape)
-    outmatrix = reshape(out, length(y), length(xtr))
-    for i in eachindex(y)
-        n = y[i]
+function load_jacobian!(out, xt, yt, tp::Tape)
+    outmatrix = reshape(out, length(yt), length(xt))
+    for i in eachindex(yt)
+        n = yt[i]
         seed!(n)
         backprop!(tp)
-        for j in eachindex(xtr)
-            m = xtr[j]
-            out[i, j] = adjoint(m)
+        for j in eachindex(xt)
+            out[i, j] = adjoint(xt[j])
         end
         unseed!(tp)
     end
     return out
 end
 
-load_jac_result!(out, xtr, ytr, tp) = load_jacobian!(out, xtr, ytr, tp)
+load_jac_result!(out, xt, yt, tp) = load_jacobian!(out, xt, yt, tp)
 
-function load_jac_result!(out::JacobianResult, xtr, ytr, tp)
-    value!(out.value, ytr)
-    load_jacobian!(out.jacobian, xtr, ytr, tp)
+function load_jac_result!(out::JacobianResult, xt, yt, tp)
+    value!(out.value, yt)
+    load_jacobian!(out.jacobian, xt, yt, tp)
     return out
 end
 
 # jacobian #
 #----------#
 
-function jacobian(f, x, tp::Tape = Tape(), xtr = track(x, tp))
-    ytr = f(xtr)
-    out = similar(ytr, eltype(x), length(ytr), length(x))
-    return load_jacobian!(out, xtr, ytr, tp)
+function jacobian(f, x, tp::Tape = Tape(), xt = track(x, tp))
+    yt = f(xt)
+    out = similar(yt, eltype(x), length(yt), length(x))
+    return load_jacobian!(out, xt, yt, tp)
 end
 
 function jacobian(f, xs::Tuple, tp::Tape = Tape(),
                   xtrs::Tuple = map(x -> track(x, tp), xs))
-    ytr = f(xtrs...)
-    outs = map(x -> similar(ytr, eltype(x), length(ytr), length(x)), xs)
+    yt = f(xtrs...)
+    outs = map(x -> similar(yt, eltype(x), length(yt), length(x)), xs)
     for i in eachindex(outs)
-        load_jacobian!(outs[i], xtrs[i], ytr, tp)
+        load_jacobian!(outs[i], xtrs[i], yt, tp)
     end
     return outs
 end
@@ -109,17 +110,42 @@ end
 # jacobian! #
 #-----------#
 
-function jacobian!(out, f, x, tp::Tape = Tape(), xtr = track(eltype(out), x, tp))
-    tp = get(tape(first(xtr)))
-    ytr = f(xtr)
-    return load_jac_result!(out, xtr, ytr, tp)
+function jacobian!(out, f, x, tp::Tape = Tape(), xt = track(eltype(out), x, tp))
+    tp = get(tape(first(xt)))
+    yt = f(xt)
+    return load_jac_result!(out, xt, yt, tp)
 end
 
 function jacobian!(outs::Tuple, f, xs::Tuple, tp::Tape = Tape(),
                    xtrs::Tuple = map((out, x) -> track(eltype(out), x, tp), outs, xs))
-   ytr = f(xtrs...)
+   yt = f(xtrs...)
    for i in eachindex(outs)
-       load_jac_result!(outs[i], xtrs[i], ytr, tp)
+       load_jac_result!(outs[i], xtrs[i], yt, tp)
    end
    return outs
 end
+
+#####################################################
+# Hessian of `f(::AbstractArray...)::AbstractArray` #
+#####################################################
+
+# hessian #
+#---------#
+
+hessian(f, x, args...) = jacobian(y -> gradient(f, y), x, args...)
+
+hessian(f, xs::Tuple, args...) = jacobian((ys...) -> gradient(f, ys), xs, args...)
+
+# hessian! #
+#----------#
+
+hessian!(out, f, x, args...) = jacobian!(out, y -> gradient(f, y), x, args...)
+
+hessian!(outs::Tuple, f, xs::Tuple, args...) = jacobian!(outs, (ys...) -> gradient(f, ys), xs, args...)
+
+# function hessian!(out::HessianResult, f, x, args...)
+#     outgrad = GradientResult(out.value, out.gradient)
+#     jacobian!(out.hessian, y -> gradient!(outgrad, f, y), x, args...)
+#     out.value = outgrad.value
+#     return out
+# end

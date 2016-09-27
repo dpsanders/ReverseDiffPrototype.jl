@@ -22,6 +22,8 @@ end
 
 test5(x) = norm(x' .* x, 1)
 
+test6(x) = det(first(x) * inv(x * x) + x)
+
 function rosenbrock1(x)
     a = one(eltype(x))
     b = 100 * a
@@ -58,7 +60,7 @@ end
 
 self_weighted_logit(x) = inv(1.0 + exp(-dot(vec(x), vec(x))))
 
-const UNARY_ARR2NUM_FUNCS = (test1, test2, test3, test4, test5,
+const UNARY_ARR2NUM_FUNCS = (test1, test2, test3, test4, test5, test6,
                              rosenbrock1, rosenbrock2, rosenbrock3, rosenbrock4,
                              ackley, det, self_weighted_logit)
 

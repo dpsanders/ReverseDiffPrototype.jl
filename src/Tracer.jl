@@ -47,7 +47,8 @@ Base.promote_array_type{A<:AbstractFloat, T<:Tracer, P}(_, ::Type{A}, ::Type{T},
 # `Real` Interface #
 ####################
 
-Base.copy(t::Tracer) = t
+Base.deepcopy{T<:Tracer}(t::T) = t
+Base.copy{T<:Tracer}(t::T) = t
 
 Base.float{S,T}(t::Tracer{S,T}) = Tracer{S}(float(value(t)))
 Base.float{S,T<:AbstractFloat}(t::Tracer{S,T}) = t

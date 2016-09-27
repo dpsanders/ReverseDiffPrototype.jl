@@ -71,23 +71,26 @@ function special_backprop_step!{A,B}(::typeof(broadcast), inputs::Tuple{A,B}, ou
     if size(a) == size(b)
         special_backprop_step!(map, inputs, output, duals)
     else
-        propagate_adjoint!(duals, output)
-        increment_adjoint!(a, sumover(1, a, duals))
+        for i in eachindex(duals)
+            duals[i] *= adjoint(output[i])
+        end
+        s = sumover(1, a, duals)
+        increment_adjoint!(a, s)
         increment_adjoint!(b, sumover(2, b, duals))
     end
     return nothing
 end
 
-function propagate_adjoint!(duals, output)
-    for i in eachindex(duals)
-        duals[i] *= adjoint(output[i])
-    end
-    return nothing
-end
-
-function sumover(p, x::AbstractArray, duals)
-    dims = (i for i in 1:ndims(duals) if size(x,i) != size(duals,i))
-    return sum(d -> partials(d, p), duals, dims)
+# Inference here is pretty wonky (see JuliaLang/julia#10533),
+# so it's important that we allocate the array for the sum
+# result ourselves. Otherwise, `reducedim_init` tries to
+# allocate an array of the wrong type in some cases, which
+# leads to conversion errors.
+function sumover{N,M,T}(p, x::AbstractArray, duals::AbstractArray{Dual{N,T},M})
+    dims = (size(x, i) != size(duals, i) ? 1 : size(duals, i) for i in 1:ndims(duals))
+    result = similar(duals, T, (dims...)::NTuple{M,Int})
+    sum!(d -> partials(d, p), result, duals)
+    return result
 end
 
 sumover(p, x::Real, duals) = sum(d -> partials(d, p), duals)
@@ -96,24 +99,24 @@ sumover(p, x::Real, duals) = sum(d -> partials(d, p), duals)
 #----------------------#
 
 function special_backprop_step!(::typeof(sum), input, _, __)
-    increment_adjoint!(input)
+    increment_adjoint!(input, one(adjtype(eltype(input))))
     return nothing
 end
 
 function special_backprop_step!{A,B}(::typeof(+), inputs::Tuple{A,B}, output::AbstractArray, _)
-    increment_adjoint!(inputs[1], output)
-    increment_adjoint!(inputs[2], output)
+    extract_and_increment_adjoint!(inputs[1], output)
+    extract_and_increment_adjoint!(inputs[2], output)
     return nothing
 end
 
 function special_backprop_step!(::typeof(-), input, output, _)
-    decrement_adjoint!(input, output)
+    extract_and_decrement_adjoint!(input, output)
     return nothing
 end
 
 function special_backprop_step!{A,B}(::typeof(-), inputs::Tuple{A,B}, output::AbstractArray, _)
-    increment_adjoint!(inputs[1], output)
-    decrement_adjoint!(inputs[2], output)
+    extract_and_increment_adjoint!(inputs[1], output)
+    extract_and_decrement_adjoint!(inputs[2], output)
     return nothing
 end
 
@@ -192,42 +195,41 @@ function special_backprop_step!(::typeof(inv), input, output, output_value)
 end
 
 function special_backprop_step!(::typeof(det), input, output, inv_input_value)
-    increment_adjoint!(input, (adjoint(output) * value(output)) * inv_input_value')
+    increment_adjoint!(input, scale!((adjoint(output) * value(output)), inv_input_value'))
     return nothing
 end
 
 # utilities #
 #-----------#
 
-negate!(A) = scale!(-one(eltype(A)), A)
+negate!(A) = map!(-, A)
 
-function decrement_adjoint!{T<:Tracer}(input::AbstractArray, output::AbstractArray{T})
-    for i in eachindex(input)
-        input[i].adjoint -= adjoint(output[i])
+function extract_and_decrement_adjoint!(x::AbstractArray, y::AbstractArray)
+    for i in eachindex(x)
+        x[i].adjoint -= adjoint(y[i])
     end
-    return input
+    return x
 end
 
-function increment_adjoint!{T<:Tracer}(input::AbstractArray, output::AbstractArray{T})
-    for i in eachindex(input)
-        input[i].adjoint += adjoint(output[i])
+function extract_and_increment_adjoint!(x::AbstractArray, y::AbstractArray)
+    for i in eachindex(x)
+        x[i].adjoint += adjoint(y[i])
     end
-    return input
+    return x
 end
 
-function increment_adjoint!{T<:Tracer}(input::AbstractArray{T})
-    x = one(adjtype(T))
-    for i in eachindex(input)
-        input[i].adjoint += x
+function increment_adjoint!(x::AbstractArray, y::AbstractArray)
+    for i in eachindex(x)
+        x[i].adjoint += y[i]
     end
-    return input
+    return x
 end
 
-function increment_adjoint!(input::AbstractArray, derivs::AbstractArray)
-    for i in eachindex(input)
-        input[i].adjoint += derivs[i]
+function increment_adjoint!(x::AbstractArray, y::Real)
+    for i in eachindex(x)
+        x[i].adjoint += y
     end
-    return input
+    return x
 end
 
-increment_adjoint!(input::Tracer, deriv::Real) = (input.adjoint += deriv)
+increment_adjoint!(x::Tracer, y::Real) = (x.adjoint += y)

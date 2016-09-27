@@ -87,6 +87,9 @@ end
     return out
 end
 
+@inline (self::ForwardOptimize{F}){F,S}(x::Dual, t::Tracer{S}) = invoke(self.f, (Dual, Real), x, t)
+@inline (self::ForwardOptimize{F}){F,S}(t::Tracer{S}, x::Dual) = invoke(self.f, (Real, Dual), t, x)
+
 ##########################
 # Skip Node Optimization #
 ##########################
